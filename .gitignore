@@ -20,3 +20,12 @@
 
 # EXP
 exp/*
+
+# Local inference environment, downloaded weights, and results
+.venv/
+ckpts/
+outputs/
+
+# Local caches and runtime logs
+.cache/
+logs/

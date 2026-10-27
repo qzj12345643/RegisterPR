@@ -1,0 +1,19 @@
+defaults:
+  - worlddrive_agent
+  - _self_
+
+_target_: navsim.agents.worlddrive.future_register_agent.RegisterDistillAgent
+training_mode: wm
+with_wm_proj: true
+metric_cache_path: null
+build_pdm_helpers: false
+teacher_register_checkpoint_path: null
+student_init_checkpoint_path: null
+distill_epochs: 10
+distill_loss_weight: 1.0
+register_candidates: 16
+teacher_candidates: 6
+teacher_steps: 1
+register_layers: 2
+validation_seed: 1234
+teacher_scheduler_path: zai-org/CogVideoX-2b

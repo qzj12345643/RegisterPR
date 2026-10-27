@@ -91,6 +91,7 @@ class PDMScorer:
         self._multi_metrics: Optional[npt.NDArray[np.float64]] = None
         self._weighted_metrics: Optional[npt.NDArray[np.float64]] = None
         self._progress_raw: Optional[npt.NDArray[np.float64]] = None
+        self._progress_steps: Optional[npt.NDArray[np.float64]] = None
 
         self._collision_time_idcs: Optional[npt.NDArray[np.float64]] = None
         self._ttc_time_idcs: Optional[npt.NDArray[np.float64]] = None
@@ -230,6 +231,8 @@ class PDMScorer:
         self._multi_metrics = np.zeros((len(MultiMetricIndex), self._num_proposals), dtype=np.float64)
         self._weighted_metrics = np.zeros((len(WeightedMetricIndex), self._num_proposals), dtype=np.float64)
         self._progress_raw = np.zeros(self._num_proposals, dtype=np.float64)
+        self._progress_steps = np.zeros(
+            (self._num_proposals, self.proposal_sampling.num_poses + 1), dtype=np.float64)
 
         # initialize infraction arrays with infinity (meaning no infraction occurs)
         self._collision_time_idcs = np.zeros(self._num_proposals, dtype=np.float64)
@@ -295,6 +298,7 @@ class PDMScorer:
         Re-implementation of nuPlan's at-fault collision metric.
         """
         no_collision_scores = np.ones(self._num_proposals, dtype=np.float64)
+        self._nc_step_scores = np.ones((self._num_proposals, self.proposal_sampling.num_poses + 1))
 
         proposal_collided_track_ids = {
             proposal_idx: copy.deepcopy(self._observation.collided_track_ids)
@@ -338,6 +342,9 @@ class PDMScorer:
                     ego_in_multiple_lanes_or_nondrivable_area and collision_at_lateral
                 ):
                     no_at_fault_collision_score = 0.0 if tracked_object.tracked_object_type in AGENT_TYPES else 0.5
+                    self._nc_step_scores[proposal_idx, time_idx] = min(
+                        self._nc_step_scores[proposal_idx, time_idx], no_at_fault_collision_score
+                    )
                     no_collision_scores[proposal_idx] = np.minimum(
                         no_collision_scores[proposal_idx], no_at_fault_collision_score
                     )
@@ -353,9 +360,18 @@ class PDMScorer:
         Re-implementation of nuPlan's drivable area compliance metric
         """
         drivable_area_compliance_scores = np.ones(self._num_proposals, dtype=np.float64)
+        self._dac_step_scores = (~self._ego_areas[:, :, EgoAreaIndex.NON_DRIVABLE_AREA]).astype(np.float64)
         off_road_mask = self._ego_areas[:, :, EgoAreaIndex.NON_DRIVABLE_AREA].any(axis=-1)
         drivable_area_compliance_scores[off_road_mask] = 0.0
         self._multi_metrics[MultiMetricIndex.DRIVABLE_AREA] = drivable_area_compliance_scores
+
+    def temporal_safety_scores(self):
+        """Call immediately after score_proposals; returns [N,3,2] NC/DAC."""
+        from .temporal_labels import aggregate_window_scores
+        return aggregate_window_scores(
+            self._nc_step_scores, self._dac_step_scores,
+            self.proposal_sampling.interval_length,
+        )
 
     def _calculate_driving_direction_compliance(self) -> None:
         """
@@ -403,13 +419,16 @@ class PDMScorer:
 
         # calculate raw progress in meter
         progress_in_meter = np.zeros(self._num_proposals, dtype=np.float64)
+        progress_steps = np.zeros(
+            (self._num_proposals, self.proposal_sampling.num_poses + 1), dtype=np.float64)
         for proposal_idx in range(self._num_proposals):
-            start_point = Point(*self._ego_coords[proposal_idx, 0, BBCoordsIndex.CENTER])
-            end_point = Point(*self._ego_coords[proposal_idx, -1, BBCoordsIndex.CENTER])
-            progress = self._centerline.project([start_point, end_point])
-            progress_in_meter[proposal_idx] = progress[1] - progress[0]
+            points = [Point(*xy) for xy in self._ego_coords[proposal_idx, :, BBCoordsIndex.CENTER]]
+            projected = np.asarray(self._centerline.project(points), dtype=np.float64)
+            progress_steps[proposal_idx] = np.maximum(projected - projected[0], 0.0)
+            progress_in_meter[proposal_idx] = progress_steps[proposal_idx, -1]
 
         self._progress_raw = np.clip(progress_in_meter, a_min=0, a_max=None)
+        self._progress_steps = progress_steps
 
     def _calculate_ttc(self):
         """

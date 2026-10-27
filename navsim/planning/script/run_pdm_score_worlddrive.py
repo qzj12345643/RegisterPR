@@ -8,6 +8,9 @@ import lzma
 import pickle
 import os
 import uuid
+import json
+import time
+import hashlib
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
@@ -30,6 +33,7 @@ from navsim.planning.simulation.planner.pdm_planner.simulation.pdm_simulator imp
 from navsim.planning.simulation.planner.pdm_planner.scoring.pdm_scorer import PDMScorer
 from navsim.planning.metric_caching.metric_cache import MetricCache
 from navsim.planning.training.dataset import CacheOnlyDataset, Dataset
+from navsim.planning.training.dataset import load_feature_target_from_pickle, dump_feature_target_to_pickle
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +83,7 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
     assert (
         simulator.proposal_sampling == scorer.proposal_sampling
     ), "Simulator and scorer proposal sampling has to be identical"
-    local_rank = int(os.getenv('RANK', 0))
+    local_rank = int(os.getenv('LOCAL_RANK', 0))
     device = f"cuda:{local_rank}"
     agent: AbstractAgent = instantiate(cfg.agent)
     agent.initialize()
@@ -95,16 +99,23 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
         scene_filter=scene_filter,
         sensor_config=agent.get_sensor_config(),
     )
-    train_data = Dataset(
+    stream_features = cfg.get('stream_features', False)
+    feature_builders = agent.get_feature_builders()
+    train_data = None if stream_features else Dataset(
         scene_loader=scene_loader,
-        feature_builders=agent.get_feature_builders(),
+        feature_builders=feature_builders,
         target_builders=agent.get_target_builders(),
         cache_path=cfg.cache_path,
         force_cache_computation=False,
     )
 
 
-    tokens_to_evaluate = list(set(scene_loader.tokens) & set(metric_cache_loader.tokens))
+    tokens_to_evaluate = sorted(set(scene_loader.tokens) & set(metric_cache_loader.tokens))
+    output_path = Path(cfg.output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    progress_path = output_path / f'progress_rank{dist.get_rank()}.json'
+    rows_path = output_path / f'results_rank{dist.get_rank()}.jsonl'
+    started = time.monotonic()
     
     pdm_results: List[Dict[str, Any]] = []
     for idx, (token) in enumerate(tokens_to_evaluate):
@@ -119,11 +130,28 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
 
         requires_scene = False
         # train_data.load_token_cache(token)
-        features, targets = train_data._load_scene_with_token(token)
+        if stream_features:
+            features, targets = {}, {}
+            for builder in feature_builders:
+                path = Path(cfg.cache_path) / scene_loader.token_to_log_file[token] / token / (builder.get_unique_name() + '.gz')
+                if path.is_file():
+                    features.update(load_feature_target_from_pickle(path))
+                else:
+                    torch.manual_seed(int(hashlib.sha256(token.encode()).hexdigest()[:8], 16))
+                    with torch.inference_mode():
+                        values = builder.compute_features(scene_loader.get_agent_input_from_token(token))
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = path.with_suffix(f'.{os.getpid()}.tmp')
+                    dump_feature_target_to_pickle(temporary, values)
+                    os.replace(temporary, path)
+                    features.update(values)
+        else:
+            features, targets = train_data._load_scene_with_token(token)
         features = {k: v.to(device)  for k, v in features.items()}
         targets = {k: v.to(device)  for k, v in targets.items()}
         # agent_input = scene_loader.get_agent_input_from_token(token)
-        trajectory = agent.compute_trajectory(features, targets, [token])
+        with torch.autocast('cuda', dtype=torch.bfloat16, enabled=cfg.get('eval_bf16', False)):
+            trajectory = agent.compute_trajectory(features, targets, [token])
         if isinstance(trajectory, list):
             pdm_result = pdm_score(
                 metric_cache=metric_cache,
@@ -152,6 +180,16 @@ def run_pdm_score(args: List[Dict[str, Union[List[str], DictConfig]]]) -> List[D
             score_row.update(asdict(pdm_result))
         score_row['rank'] = dist.get_rank()
         pdm_results.append(score_row)
+        if stream_features:
+            with rows_path.open('a') as stream:
+                stream.write(json.dumps(score_row) + '\n')
+            progress = dict(rank=dist.get_rank(), completed=idx+1, total=len(tokens_to_evaluate),
+                            elapsed_s=time.monotonic()-started, last_token=token, last_score=float(pdm_result.score))
+            temporary = progress_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(progress, indent=2))
+            os.replace(temporary, progress_path)
+            if (idx+1) % 10 == 0 or idx == 0:
+                logger.info('Evaluation progress: %s', progress)
     serialized_score_rows = pickle.dumps(pdm_results)
     return serialized_score_rows
 
@@ -237,7 +275,7 @@ def main(cfg: DictConfig) -> None:
             "log_file": log_file,
             "tokens": [token],
         })
-    serialized_score_rows = run_pdm_score(data_points)
+    serialized_score_rows = run_pdm_score(data_points) if data_points else pickle.dumps([])
 
     device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
 
@@ -259,8 +297,8 @@ def main(cfg: DictConfig) -> None:
 
     if dist.get_rank() == 0:
         final_results = []
-        for gathered_tensor in gathered_results:
-            gathered_tensor = gathered_tensor[:local_size]  
+        for gathered_tensor, shard_size in zip(gathered_results, size_list):
+            gathered_tensor = gathered_tensor[:shard_size.item()]
             serialized_data = gathered_tensor.cpu().numpy().tobytes()
             final_results.extend(pickle.loads(serialized_data))  # 
     

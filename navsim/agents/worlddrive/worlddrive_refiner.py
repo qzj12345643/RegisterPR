@@ -4,6 +4,65 @@ import torch
 from timm.models.layers import Mlp
 from diffusers.models.embeddings import get_2d_sincos_pos_embed
 
+
+class FutureRegisterFAR(nn.Module):
+    """FAR-shaped student readout for register distillation.
+
+    This keeps the action-conditioned cross-attention pattern while using 36
+    queries (three groups of twelve). Motion tokens belong to one candidate
+    (one in pure distillation, five in joint training). They condition the
+    decoder's cross-attention alongside visual tokens, then participate in
+    register/ego fusion. The output is one register set per candidate: [B,36,512].
+    """
+    def __init__(self, dim=512, registers_per_window=12, layers=4, heads=8,
+                 visual_dim=512, status_dim=8):
+        super().__init__()
+        self.dim = dim
+        self.registers_per_window = registers_per_window
+        self.register_count = 3 * registers_per_window
+        self.query = nn.Parameter(torch.randn(3, registers_per_window, dim) * 0.02)
+        self.time_embedding = nn.Parameter(torch.randn(3, 1, dim) * 0.02)
+        self.ego_token = nn.Parameter(torch.randn(1, dim) * 0.02)
+        self.status_projection = nn.Linear(status_dim, dim)
+        self.visual_projection = nn.Identity() if visual_dim == dim else nn.Linear(visual_dim, dim)
+        self.decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(dim, heads, dim * 2, dropout=0.0, activation='gelu',
+                                      batch_first=True, norm_first=True),
+            num_layers=layers, norm=nn.LayerNorm(dim))
+        self.fusion = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(dim, heads, dim * 2, dropout=0.0, activation='gelu',
+                                      batch_first=True, norm_first=True),
+            num_layers=layers, norm=nn.LayerNorm(dim), enable_nested_tensor=False)
+
+    def forward(self, visual_token, motion_token, ego_status=None, return_scorer_tokens=False):
+        """visual_token [B,S,512], motion_token [B,K,512]."""
+        if visual_token.ndim != 3 or visual_token.shape[-1] != self.dim:
+            raise ValueError('Expected visual tokens [B,S,512].')
+        if motion_token.ndim != 3 or motion_token.shape[0] != visual_token.shape[0] or motion_token.shape[-1] != self.dim:
+            raise ValueError('Expected candidate motion tokens [B,K,512].')
+        b, _ = motion_token.shape[:2]
+        memory = self.visual_projection(visual_token)
+        # Match original FAR conditioning: future queries read both the scene
+        # and the candidate action before the later register/ego fusion.
+        motion = motion_token.detach().to(memory)
+        memory = torch.cat((memory, motion), dim=1)
+        query = (self.query + self.time_embedding).reshape(1, self.register_count, self.dim)
+        query = query.expand(b, -1, -1)
+        local = self.decoder(query, memory)
+        motion = motion.to(local)
+        if ego_status is None:
+            ego = self.ego_token[None].expand(b, -1, -1)
+        else:
+            if ego_status.ndim != 2 or ego_status.shape[0] != b:
+                raise ValueError('Expected ego status [B,status_dim].')
+            ego = self.ego_token + self.status_projection(ego_status)
+            ego = ego[:, None]
+        ego = ego.to(local)
+        fused = self.fusion(torch.cat((local, ego, motion), dim=1))
+        if return_scorer_tokens:
+            return fused[:, :self.register_count + 1]
+        return fused[:, :self.register_count]
+
 class TrajWorldRefiner(nn.Module):
     def __init__(self,
                  traj_vocab_dim=512,
@@ -197,4 +256,3 @@ class PairwiseRankingLoss(nn.Module):
         total_loss = masked_loss.sum() / num_valid_pairs
         
         return total_loss
-

@@ -63,7 +63,10 @@ class WorldDriveAgent(AbstractAgent):
         cls_loss_weight = 1,
         sim_loss_weight = 1,
         select_version = 1,
-        visualize=False
+        visualize=False,
+        metric_cache_path="/mnt/gxt-share-navsim/dataset/trajworld_1024/metric_cache/metric_cache",
+        teacher_scheduler_path="/data/diffusiondrive/ckpt/zai-org/CogVideoX-2b",
+        build_pdm_helpers=True,
     ):
         super().__init__()
         self._trajectory_sampling = trajectory_sampling
@@ -107,7 +110,7 @@ class WorldDriveAgent(AbstractAgent):
                 )
                 self.vae_backbone.eval()
                 self.cfg = TrajWorldModelConfig(image_size_width = 512, image_size_height = 1024)
-            self.trajworldmodel = TrajWorldModel(self.cfg)
+            self.trajworldmodel = TrajWorldModel(self.cfg, scheduler_path=teacher_scheduler_path)
             self.trajworldmodel.eval()
             for param in self.trajworldmodel.parameters():
                 param.requires_grad = False
@@ -135,10 +138,11 @@ class WorldDriveAgent(AbstractAgent):
             if select_version == 1:
                 self.trajrefiner = TrajWorldRefiner()
 
-            proposal_sampling = TrajectorySampling(time_horizon=4, interval_length=0.1)
-            self.simulator = PDMSimulator(proposal_sampling)
-            self.train_scorer = PDMScorer(proposal_sampling)
-            self.metric_cache_loader = MetricCacheLoader(Path("/mnt/gxt-share-navsim/dataset/trajworld_1024/metric_cache/metric_cache"))
+            if build_pdm_helpers:
+                proposal_sampling = TrajectorySampling(time_horizon=4, interval_length=0.1)
+                self.simulator = PDMSimulator(proposal_sampling)
+                self.train_scorer = PDMScorer(proposal_sampling)
+                self.metric_cache_loader = MetricCacheLoader(Path(metric_cache_path))
 
             
         

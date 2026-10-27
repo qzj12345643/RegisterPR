@@ -1,0 +1,3 @@
+# Overlay on the existing DriveWorld-VLA (driveworld-vla) environment.
+# Keep its torch 2.0.1+cu118, torchvision 0.15.2+cu118 and transformers 4.37.2.
+diffusers==0.30.3

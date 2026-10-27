@@ -8,7 +8,8 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from diffusers.models.normalization import AdaLayerNorm, CogVideoXLayerNormZero
 from diffusers.models.attention import Attention, FeedForward
 from diffusers.models.attention_processor import CogVideoXAttnProcessor2_0
-from diffusers.models.embeddings import get_3d_sincos_pos_embed, Timesteps, TimestepEmbedding
+from diffusers.models.embeddings import Timesteps, TimestepEmbedding
+from .embeddings import get_3d_sincos_pos_embed
 
 
 class CogVideoXPatchEmbed(nn.Module):

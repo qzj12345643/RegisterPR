@@ -1,0 +1,10 @@
+defaults:
+  - student_scorer_4gpu
+  - _self_
+
+experiment_name: student_register_scorer_top16_sample6_2gpu
+trainer:
+  params:
+    devices: 2
+    # 36 scenes/GPU * 2 GPUs * 2 microbatches = 144 scenes/update.
+    accumulate_grad_batches: 2

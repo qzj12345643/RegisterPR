@@ -142,3 +142,4 @@ class TrajectoryTargetBuilder(AbstractTargetBuilder):
             sim_reward_stacked = torch.stack(sim_reward_list) 
         
             return {"trajectory": torch.tensor(future_trajectory.poses), "sim_reward": sim_reward_stacked}
+        return {"trajectory": torch.tensor(future_trajectory.poses)}

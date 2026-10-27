@@ -1,0 +1,19 @@
+defaults:
+  - worlddrive_agent
+  - _self_
+
+_target_: navsim.agents.worlddrive.student_scorer_agent.StudentRegisterScorerAgent
+with_wm_proj: true
+student_checkpoint_path: null
+scorer_checkpoint_path: null
+metric_cache_path: null
+register_candidates: 16
+score_candidates: 6
+validation_seed: 1234
+scorer_warmup_epochs: 1
+training_epochs: 10
+far_lr_scale: 0.1
+segment_loss_weight: 1.0
+global_loss_weight: 1.0
+aggregate_loss_weight: 1.0
+pdm_loss_weight: 1.0

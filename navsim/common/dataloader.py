@@ -188,9 +188,13 @@ class MetricCacheLoader:
         with open(str(metadata_file), "r") as f:
             cache_paths = f.read().splitlines()[1:]
         metric_cache_dict = {cache_path.split("/")[-2]: cache_path for cache_path in cache_paths}
-        metric_cache_root_in_csv = re.findall(r'(.*?/metric_cache)/', list(metric_cache_dict.values())[0])[0]
-        for key, value in metric_cache_dict.items():
-            metric_cache_dict[key] = value.replace(metric_cache_root_in_csv, str(cache_path))
+        # Absolute indexes can also live in named training cache directories.
+        # Only relocate the legacy /metric_cache/ prefix when it is present.
+        if metric_cache_dict:
+            legacy_roots = re.findall(r'(.*?/metric_cache)/', next(iter(metric_cache_dict.values())))
+            if legacy_roots:
+                for key, value in metric_cache_dict.items():
+                    metric_cache_dict[key] = value.replace(legacy_roots[0], str(cache_path), 1)
         return metric_cache_dict
 
     @property

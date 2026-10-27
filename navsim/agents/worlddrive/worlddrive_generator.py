@@ -85,7 +85,7 @@ class TrajWorldModelConfig(PretrainedConfig):
     adapters_layers: int = 3
 
 class TrajWorldModel(nn.Module):
-    def __init__(self, config: TrajWorldModelConfig):
+    def __init__(self, config: TrajWorldModelConfig, scheduler_path="/data/diffusiondrive/ckpt/zai-org/CogVideoX-2b"):
         super().__init__()
         
         self.config = config
@@ -102,7 +102,7 @@ class TrajWorldModel(nn.Module):
             max_text_seq_length=self.config.topk,
         )
 
-        self.scheduler = CogVideoXDPMScheduler.from_pretrained("/data/diffusiondrive/ckpt/zai-org/CogVideoX-2b", 
+        self.scheduler = CogVideoXDPMScheduler.from_pretrained(scheduler_path,
                                                                subfolder="scheduler")
         
 

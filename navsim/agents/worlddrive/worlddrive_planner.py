@@ -5,7 +5,10 @@ import torch
 from torch import nn
 
 from timm.models.layers import Mlp
-from diffusers.models.embeddings import get_3d_sincos_pos_embed
+# Use the repository implementation.  The installed diffusers version exposes
+# a legacy helper without ``device``/``output_type`` arguments, while the
+# planner needs a torch tensor on the active device.
+from navsim.agents.worlddrive.blocks.embeddings import get_3d_sincos_pos_embed
 
 
 SCORE_HEAD_HIDDEN_DIM = 128
@@ -148,7 +151,11 @@ class TrajWorldPlanner(nn.Module):
         return pos_embedding
     
 
-    def forward(self, visual_latent, ego_status, traj_vocab_feature, traj_vocab, targets=None, eval_mode=False):
+    def forward(self, visual_latent, ego_status, traj_vocab_feature, traj_vocab, targets=None, eval_mode=False,
+                return_candidates_only=False):
+
+        if return_candidates_only and not eval_mode:
+            raise ValueError('Candidate-only forward requires eval_mode=True.')
 
         traj_vocab = traj_vocab.to(visual_latent.device)
         height, width = visual_latent.shape[-2:]
@@ -185,6 +192,10 @@ class TrajWorldPlanner(nn.Module):
             im_rewards_softmax = torch.softmax(traj_score.squeeze(-1), dim=-1)
             sim_rewards = [reward.sigmoid() for reward in sim_rewards]  
             final_rewards = self.weighted_reward_calculation(im_rewards_softmax, sim_rewards)
+            if return_candidates_only:
+                # Supports arbitrary batch sizes without losses or single-scene
+                # trajectory selection. Scores match the deployed planner.
+                return final_rewards, traj_offset, (visual_token, ego_token)
             offset = traj_offset.squeeze(0)
             trajectory_anchors = traj_vocab + offset.reshape(-1, self.traj_len, self.traj_dim)
             bs = im_rewards_softmax.shape[0]
@@ -366,6 +377,4 @@ class TrajEncoder(nn.Module):
             traj_embed = traj_vocab_embed + traj_offset_embed
 
         return traj_embed
-
-
 

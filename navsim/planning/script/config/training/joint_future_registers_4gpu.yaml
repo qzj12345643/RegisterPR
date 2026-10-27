@@ -1,0 +1,79 @@
+defaults:
+  - default_common
+  - default_evaluation
+  - default_train_val_test_log_split
+  - agent: joint_future_register_agent
+  - override train_test_split: navtrain
+  - _self_
+
+split: trainval
+seed: 0
+# Full Lightning training-state restore; null starts a new training run.
+# max_epochs remains the total target, including epochs already completed.
+resume_checkpoint_path: ${oc.env:RESUME_CHECKPOINT,null}
+navsim_log_path: ${oc.env:OPENSCENE_DATA_ROOT}/navsim_logs/trainval
+sensor_blobs_path: ${oc.env:OPENSCENE_DATA_ROOT}/sensor_blobs/trainval
+experiment_name: joint_future_registers_top16_pdm6_4gpu
+wandb:
+  enabled: true
+  project: ${oc.env:WANDB_PROJECT,worlddrive}
+  entity: ${oc.env:WANDB_ENTITY,null}
+  name: ${oc.env:WANDB_NAME,${experiment_name}}
+  mode: ${oc.env:WANDB_MODE,online}
+cache_path: ${oc.env:FEATURE_CACHE,${oc.env:NAVSIM_EXP_ROOT}/worlddrive_train_cache}
+use_cache_without_dataset: true
+force_cache_computation: false
+
+agent:
+  checkpoint_path: ${oc.env:PLANNER_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worlddrive_stage1_train_87p7_pdms.ckpt}
+  worldmodel_checkpoint_path: ${oc.env:WORLD_MODEL_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worldtraj_stage1_512_tadwm.pkl}
+  vocab_path: ${oc.env:TRAJECTORY_VOCAB,/mnt/cfs/qiuzijun/WorldDrive/ckpts/trajectory_anchors_256.npy}
+  teacher_scheduler_path: ${oc.env:TEACHER_SCHEDULER_PATH,/mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b}
+  pretrained_vae_path: /mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b
+  lr: 0.0002
+  register_candidates: 16
+  teacher_candidates: 6
+  teacher_steps: 1
+  register_layers: 2
+  validation_seed: 1234
+  distill_loss_weight: 5.0
+  # Weighted teacher scorer objective; the final loss is teacher_register_loss
+  # plus distill_loss_weight * register_distill_loss.
+  nc_loss_weight: 1.0
+  dac_loss_weight: 1.0
+  ttc_loss_weight: 1.0
+  comfort_loss_weight: 1.0
+  ep_loss_weight: 1.0
+  ep_global_loss_weight: 0.25
+
+dataloader:
+  params:
+    batch_size: 36
+    num_workers: 12
+    pin_memory: true
+    prefetch_factor: 4
+
+trainer:
+  params:
+    max_epochs: 10
+    check_val_every_n_epoch: 3
+    val_check_interval: 1.0
+    limit_train_batches: 1.0
+    limit_val_batches: 1.0
+    accelerator: gpu
+    devices: 4
+    strategy: ddp
+    precision: bf16-mixed
+    num_nodes: 1
+    num_sanity_val_steps: 0
+    fast_dev_run: false
+    log_every_n_steps: 10
+    accumulate_grad_batches: 1
+    gradient_clip_val: 1.0
+    gradient_clip_algorithm: norm
+    default_root_dir: ${output_dir}
+    checkpoint:
+      dirpath: ${output_dir}/checkpoints
+      filename: 'joint-registers-{epoch:02d}-{step}'
+      every_n_epochs: 1
+      save_on_train_epoch_end: true

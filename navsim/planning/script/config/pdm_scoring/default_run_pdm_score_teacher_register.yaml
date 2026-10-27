@@ -1,0 +1,26 @@
+hydra:
+  run:
+    dir: ${output_dir}
+  output_subdir: ${output_dir}/code/hydra
+  searchpath:
+    - file://${oc.env:NAVSIM_DEVKIT_ROOT,/mnt/cfs/qiuzijun/WorldDrive}/navsim/planning/script/config/common
+  job:
+    chdir: False
+
+cache_path: ${oc.env:FEATURE_CACHE,${oc.env:NAVSIM_EXP_ROOT}/worlddrive_navtest_cache}
+use_cache_without_dataset: true
+force_cache_computation: false
+stream_features: true
+eval_bf16: true
+
+defaults:
+  - default_common
+  - default_evaluation
+  - default_scoring_parameters
+  - agent: teacher_register_eval_agent
+  - _self_
+  - override train_test_split: navtest
+  - override worker: sequential
+
+metric_cache_path: ${oc.env:METRIC_CACHE_PATH,${oc.env:NAVSIM_EXP_ROOT}/metric_cache}
+experiment_name: teacher_register_eval

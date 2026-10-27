@@ -1,0 +1,21 @@
+defaults:
+  - worlddrive_agent
+  - _self_
+
+_target_: navsim.agents.worlddrive.future_register_agent.JointFutureRegisterAgent
+training_mode: wm
+with_wm_proj: true
+metric_cache_path: /mnt/cfs/qiuzijun/DrivoR/exp/train_metric_cache_ego_area_v2
+register_candidates: 16
+teacher_candidates: 6
+teacher_steps: 1
+register_layers: 2
+validation_seed: 1234
+distill_loss_weight: 1.0
+nc_loss_weight: 1.0
+dac_loss_weight: 1.0
+ttc_loss_weight: 1.0
+comfort_loss_weight: 1.0
+ep_loss_weight: 1.0
+ep_global_loss_weight: 0.25
+teacher_scheduler_path: zai-org/CogVideoX-2b

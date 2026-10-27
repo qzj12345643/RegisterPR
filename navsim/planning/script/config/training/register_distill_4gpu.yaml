@@ -1,0 +1,79 @@
+defaults:
+  - default_common
+  - default_evaluation
+  - default_train_val_test_log_split
+  - agent: register_distill_agent
+  - override train_test_split: navtrain
+  - _self_
+
+split: trainval
+seed: 0
+# Only use this for a checkpoint produced by THIS pure-distillation stage.
+resume_checkpoint_path: ${oc.env:DISTILL_RESUME_CHECKPOINT,null}
+navsim_log_path: ${oc.env:OPENSCENE_DATA_ROOT}/navsim_logs/trainval
+sensor_blobs_path: ${oc.env:OPENSCENE_DATA_ROOT}/sensor_blobs/trainval
+experiment_name: register_distill_single_motion_top16_sample6_4gpu
+wandb:
+  enabled: true
+  project: ${oc.env:WANDB_PROJECT,worlddrive}
+  entity: ${oc.env:WANDB_ENTITY,null}
+  name: ${oc.env:WANDB_NAME,${experiment_name}}
+  mode: ${oc.env:WANDB_MODE,online}
+cache_path: ${oc.env:FEATURE_CACHE,${oc.env:NAVSIM_EXP_ROOT}/worlddrive_train_cache}
+use_cache_without_dataset: true
+force_cache_computation: false
+
+agent:
+  # Full joint snapshot supplies planner, DiT, teacher registers and student.
+  teacher_register_checkpoint_path: ${oc.env:TEACHER_REGISTER_CHECKPOINT,'/mnt/cfs/qiuzijun/WorldDrive/exp/joint_future_registers_top16_pdm6_4gpu/2026.09.20.12.12.28/checkpoints/joint-registers-epoch=05-step=3552.ckpt'}
+  student_init_checkpoint_path: ${oc.env:STUDENT_INIT_CHECKPOINT,${agent.teacher_register_checkpoint_path}}
+  vocab_path: ${oc.env:TRAJECTORY_VOCAB,/mnt/cfs/qiuzijun/WorldDrive/ckpts/trajectory_anchors_256.npy}
+  teacher_scheduler_path: ${oc.env:TEACHER_SCHEDULER_PATH,/mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b}
+  pretrained_vae_path: /mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b
+  # A new optimizer/scheduler; 1/4 of the preceding joint-stage initial LR.
+  lr: 0.00005
+  distill_epochs: ${trainer.params.max_epochs}
+  # loss = distill_loss_weight * MSE(student_36_registers, frozen_teacher_36_registers)
+  distill_loss_weight: 1.0
+  reg_loss_weight: 0.0
+  cls_loss_weight: 0.0
+  sim_loss_weight: 0.0
+  metric_cache_path: null
+  build_pdm_helpers: false
+  register_candidates: 16
+  teacher_candidates: 6
+  teacher_steps: 1
+  register_layers: 2
+  validation_seed: 1234
+
+dataloader:
+  params:
+    batch_size: 36
+    num_workers: 12
+    pin_memory: true
+    prefetch_factor: 4
+
+trainer:
+  params:
+    max_epochs: 10
+    check_val_every_n_epoch: 1
+    val_check_interval: 1.0
+    limit_train_batches: 1.0
+    limit_val_batches: 1.0
+    accelerator: gpu
+    devices: 4
+    strategy: ddp
+    precision: bf16-mixed
+    num_nodes: 1
+    num_sanity_val_steps: 0
+    fast_dev_run: false
+    log_every_n_steps: 10
+    accumulate_grad_batches: 1
+    gradient_clip_val: 1.0
+    gradient_clip_algorithm: norm
+    default_root_dir: ${output_dir}
+    checkpoint:
+      dirpath: ${output_dir}/checkpoints
+      filename: 'distill-{epoch:02d}-{step}'
+      every_n_epochs: 1
+      save_on_train_epoch_end: true

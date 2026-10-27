@@ -17,6 +17,7 @@ from navsim.common.dataclasses import SceneFilter
 from navsim.common.dataloader import SceneLoader
 from navsim.planning.training.dataset import CacheOnlyDataset, Dataset
 from navsim.planning.training.agent_lightning_module import AgentLightningModule
+from navsim.planning.training.logging_utils import build_training_loggers
 
 torch.set_float32_matmul_precision('high')
 
@@ -90,10 +91,20 @@ def main(cfg: DictConfig) -> None:
     :param cfg: omegaconf dictionary
     """
 
+    # Validate before constructing loggers/models or scanning the feature cache.
+    resume_checkpoint_path = cfg.get("resume_checkpoint_path")
+    if resume_checkpoint_path is not None:
+        checkpoint_path = Path(str(resume_checkpoint_path)).expanduser()
+        if not str(resume_checkpoint_path).strip() or not checkpoint_path.is_file():
+            raise FileNotFoundError(f"Resume checkpoint does not exist: {resume_checkpoint_path}")
+        resume_checkpoint_path = str(checkpoint_path.resolve())
+        logger.info("Resuming full training state from: %s", resume_checkpoint_path)
+
     pl.seed_everything(cfg.seed, workers=True)
     logger.info(f"Global Seed set to {cfg.seed}")
 
     logger.info(f"Path where all results are stored: {cfg.output_dir}")
+    training_loggers = build_training_loggers(cfg)
 
     logger.info("Building Agent")
     agent: AbstractAgent = instantiate(cfg.agent)
@@ -117,7 +128,7 @@ def main(cfg: DictConfig) -> None:
             cache_path=cfg.cache_path,
             feature_builders=agent.get_feature_builders(),
             target_builders=agent.get_target_builders(),
-            log_names=cfg.train_logs+cfg.val_logs,
+            log_names=cfg.train_logs,
         )
         val_data = CacheOnlyDataset(
             cache_path=cfg.cache_path,
@@ -148,6 +159,7 @@ def main(cfg: DictConfig) -> None:
             dirpath=checkpoint_params.get('dirpath', 'path/to/save'),  # 默认保存路径
             filename=checkpoint_params.get('filename', 'd-epoch={epoch}-step={step}'),  # 默认保存文件格式
             every_n_epochs=checkpoint_params.get('every_n_epochs', 10),  # 每10个epoch保存一次
+            save_on_train_epoch_end=checkpoint_params.get('save_on_train_epoch_end', None),
             save_top_k=-1,  # 保存所有检查点
             verbose=True,
         )
@@ -160,16 +172,18 @@ def main(cfg: DictConfig) -> None:
         trainer = pl.Trainer(
             strategy=DDPStrategy(find_unused_parameters=True),
             **trainer_params,
-            callbacks=callbacks
+            callbacks=callbacks,
+            logger=training_loggers,
         )
     else:
-        trainer = pl.Trainer(**trainer_params, callbacks=callbacks)
+        trainer = pl.Trainer(**trainer_params, callbacks=callbacks, logger=training_loggers)
 
     logger.info("Starting Training")
     trainer.fit(
         model=lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
+        ckpt_path=resume_checkpoint_path,
     )
 
 

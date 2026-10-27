@@ -1,0 +1,23 @@
+defaults:
+  - worlddrive_agent
+  - _self_
+
+_target_: navsim.agents.worlddrive.future_register_agent.TeacherRegisterEvalAgent
+_convert_: 'all'
+
+training_mode: wm
+with_wm_proj: true
+metric_cache_path: ${oc.env:METRIC_CACHE_PATH,${oc.env:NAVSIM_EXP_ROOT}/metric_cache}
+
+register_candidates: 16
+teacher_candidates: 16
+teacher_steps: 1
+register_layers: 2
+validation_seed: 1234
+
+teacher_register_checkpoint_path: ${oc.env:TEACHER_REGISTER_CHECKPOINT}
+checkpoint_path: ${oc.env:PLANNER_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worlddrive_stage1_train_87p7_pdms.ckpt}
+worldmodel_checkpoint_path: ${oc.env:WORLD_MODEL_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worldtraj_stage1_512_tadwm.pkl}
+vocab_path: ${oc.env:TRAJECTORY_VOCAB,/mnt/cfs/qiuzijun/WorldDrive/ckpts/trajectory_anchors_256.npy}
+teacher_scheduler_path: ${oc.env:TEACHER_SCHEDULER_PATH,/mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b}
+pretrained_vae_path: ${oc.env:PRETRAINED_VAE_PATH,/mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b}

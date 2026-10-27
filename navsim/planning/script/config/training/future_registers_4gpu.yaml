@@ -1,0 +1,75 @@
+# Four GPUs; frozen DiT/planner, train only the planning future register readout.
+hydra:
+  run:
+    dir: ${output_dir}
+  output_subdir: ${output_dir}/code/hydra
+  searchpath:
+    - file://${oc.env:WORLDDRIVE_CONFIG_ROOT}
+  job:
+    chdir: false
+
+defaults:
+  - default_common
+  - default_evaluation
+  - default_train_val_test_log_split
+  - agent: future_register_agent
+  - override train_test_split: navtrain
+  - _self_
+
+split: trainval
+seed: 0
+navsim_log_path: ${oc.env:OPENSCENE_DATA_ROOT}/navsim_logs/trainval
+sensor_blobs_path: ${oc.env:OPENSCENE_DATA_ROOT}/sensor_blobs/trainval
+experiment_name: future_registers_top16_pdm6_4gpu
+# These must be WorldDrive caches containing visual_token AND low_visual_token,
+# not DrivoR image caches. Override by environment or edit this YAML.
+cache_path: ${oc.env:FEATURE_CACHE,${oc.env:NAVSIM_EXP_ROOT}/worlddrive_train_cache}
+use_cache_without_dataset: true
+force_cache_computation: false
+
+agent:
+  checkpoint_path: ${oc.env:PLANNER_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worlddrive_stage1_train_87p7_pdms.ckpt}
+  # Required: a TA-DWM checkpoint with model_state_dict, NOT a FAR checkpoint.
+  worldmodel_checkpoint_path: ${oc.env:WORLD_MODEL_CHECKPOINT,/mnt/cfs/qiuzijun/WorldDrive/ckpts/worldtraj_stage1_512_tadwm.pkl}
+  vocab_path: ${oc.env:TRAJECTORY_VOCAB,/mnt/cfs/qiuzijun/WorldDrive/ckpts/trajectory_anchors_256.npy}
+  metric_cache_path: ${oc.env:METRIC_CACHE,/mnt/cfs/qiuzijun/DrivoR/exp/train_metric_cache_ego_area_v2}
+  teacher_scheduler_path: ${oc.env:TEACHER_SCHEDULER_PATH,/mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b}
+  pretrained_vae_path: /mnt/cfs/qiuzijun/WorldDrive/ckpts/CogVideoX-2b
+  lr: 0.0002
+  register_candidates: 16
+  teacher_candidates: 6
+  teacher_steps: 1
+  register_layers: 2
+  validation_seed: 1234
+
+dataloader:
+  params:
+    # Per GPU: 1 scene x 5 trajectories; global batch = 4 scenes.
+    batch_size: 12
+    num_workers: 4
+    pin_memory: true
+    prefetch_factor: 2
+
+trainer:
+  params:
+    max_epochs: 15
+    check_val_every_n_epoch: 3
+    val_check_interval: 1.0
+    limit_train_batches: 1.0
+    limit_val_batches: 1.0
+    accelerator: gpu
+    devices: 4
+    strategy: ddp
+    precision: bf16-mixed
+    num_nodes: 1
+    num_sanity_val_steps: 0
+    fast_dev_run: false
+    log_every_n_steps: 10
+    accumulate_grad_batches: 1
+    gradient_clip_val: 1.0
+    gradient_clip_algorithm: norm
+    default_root_dir: ${output_dir}
+    checkpoint:
+      dirpath: ${output_dir}/checkpoints
+      filename: 'registers-{epoch:02d}-{step}'
+      every_n_epochs: 3
